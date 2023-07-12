@@ -1,10 +1,8 @@
 #%%
-from random import choices, random
 import pandas as pd
 import numpy as np
 import pybullet as p
-import cv2, os
-from itertools import product
+import cv2
 from math import pi, sin, cos
 
 class Exit:
@@ -42,7 +40,7 @@ def get_physics(GUI, w, h):
 
 
 class Arena():
-    def __init__(self, arena_name):
+    def __init__(self, arena_name = "t"):
         if(not arena_name.endswith(".png")): arena_name += ".png"
         self.start = arena_dict[arena_name].start
         self.exits = arena_dict[arena_name].exits
@@ -56,7 +54,7 @@ class Arena():
             plane_id = p.loadURDF("plane.urdf", position, globalScaling=.5, useFixedBase=True, physicsClientId=self.physicsClient)
             plane_ids.append(plane_id)
 
-        self.ends = {} ; self.colors = {} 
+        self.ends = {} ; self.colors = {} ; self.locs = []
         for loc in ((x, y) for x in range(w) for y in range(h)):
             pos = [loc[0], loc[1], .5]
             if ((arena_map[loc] == [255]).all()):
@@ -71,6 +69,7 @@ class Arena():
                 cube = p.loadURDF("cube.urdf", (pos[0], pos[1], pos[2]), ors, 
                                   useFixedBase=True, physicsClientId=self.physicsClient)
                 self.colors[cube] = color
+                self.locs.append((pos[0], pos[1]))
         
         for cube, color in self.colors.items():
             p.changeVisualShape(cube, -1, rgbaColor = color, physicsClientId = self.physicsClient)
@@ -78,7 +77,6 @@ class Arena():
         inherent_roll = pi/2
         inherent_pitch = 0
         yaw = 0
-        spe = 0
         file = "ted_duck.urdf"
         pos = (self.start[0], self.start[1], .5)
         orn = p.getQuaternionFromEuler([inherent_roll, inherent_pitch, yaw])
@@ -86,24 +84,18 @@ class Arena():
                            globalScaling = 2, 
                            physicsClientId = self.physicsClient)
         p.changeDynamics(self.body_num, 0, maxJointVelocity=10000)
-        x, y = cos(yaw)*spe, sin(yaw)*spe
-        self.resetBaseVelocity(x, y)
         p.changeVisualShape(self.body_num, -1, rgbaColor = [1,0,0,1], physicsClientId = self.physicsClient)
         
     def begin(self):
         yaw = 0
         spe = 0
         pos = (self.start[0], self.start[1], .5)
-        x, y = cos(yaw)*spe, sin(yaw)*spe
-        self.resetBaseVelocity(x, y)
         self.resetBasePositionAndOrientation(pos, yaw)
         
-    def get_pos_yaw_spe(self):
+    def get_pos_yaw(self):
         pos, ors = p.getBasePositionAndOrientation(self.body_num, physicsClientId = self.physicsClient)
         yaw = p.getEulerFromQuaternion(ors)[-1]
-        (x, y, _), _ = p.getBaseVelocity(self.body_num, physicsClientId = self.physicsClient)
-        spe = (x**2 + y**2)**.5
-        return(pos, yaw, spe)
+        return(pos, yaw)
     
     def resetBasePositionAndOrientation(self, pos, yaw):
         inherent_roll = pi/2
@@ -111,48 +103,41 @@ class Arena():
         orn = p.getQuaternionFromEuler([inherent_roll, inherent_pitch, yaw])
         p.resetBasePositionAndOrientation(self.body_num, pos, orn, physicsClientId = self.physicsClient)
         
-    def resetBaseVelocity(self, x, y):    
-        p.resetBaseVelocity(self.body_num, (x,y,0), (0,0,0), physicsClientId = self.physicsClient)
+    def obs(self):
+        pos, yaw = self.get_pos_yaw()
+        x, y = cos(yaw), sin(yaw)
+        view_matrix = p.computeViewMatrix(
+            cameraEyePosition = [pos[0], pos[1], .4], 
+            cameraTargetPosition = [pos[0] - x, pos[1] - y, .4], 
+            cameraUpVector = [0, 0, 1], physicsClientId = self.physicsClient)
+        proj_matrix = p.computeProjectionMatrixFOV(
+            fov = 90, aspect = 1, nearVal = .01, 
+            farVal = 10, physicsClientId = self.physicsClient)
+        _, _, rgba, _, _ = p.getCameraImage(
+            width=512, height=512,
+            projectionMatrix=proj_matrix, viewMatrix=view_matrix, shadow = 0,
+            physicsClientId = self.physicsClient)
+        rgb = np.divide(rgba[:,:,:-1], 255)
+        return(rgb)
     
     def pos_in_box(self, box):
         (min_x, max_x), (min_y, max_y) = box 
-        pos, _, _ = self.get_pos_yaw_spe()
+        pos, _ = self.get_pos_yaw()
         in_x = pos[0] >= min_x and pos[0] <= max_x 
         in_y = pos[1] >= min_y and pos[1] <= max_y 
         return(in_x and in_y)
     
     def end_collisions(self):
         col = False
-        which = "NONE"
-        reward = ((1, 0),)
+        which = None
         for end_name, (end, end_reward) in self.ends.items():
             if self.pos_in_box(end):
                 col = True
                 which = end_name
-                reward = 10 if end_reward == "better" else 1
-        weights = [w for w, r in reward]
-        rewards = [r for w, r in reward]
-        reward = choices(rewards, weights = weights, k = 1)[0]
-        return(col, which, reward)
-    
-    def other_collisions(self):
-        col = False
-        for cube in self.colors.keys():
-            if 0 < len(p.getContactPoints(self.body_num, cube, physicsClientId = self.physicsClient)):
-                col = True
-        return(col)
+        return(col, which)
+        
                 
-    def randomize(self):
-        for cube in self.colors.keys():
-            pos, _ = p.getBasePositionAndOrientation(cube, physicsClientId = self.physicsClient)
-            if(pos[:-1] in self.random_pos):
-                p.changeVisualShape(cube, -1, rgbaColor = [choices([0,1])[0], choices([0,1])[0], choices([0,1])[0], 1], physicsClientId = self.physicsClient)
-            
-    def stop(self):
-        p.disconnect(self.physicsClient)
-
-
 
 if __name__ == "__main__":
-    arena = Arena("t")
+    arena = Arena()
 # %%

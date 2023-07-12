@@ -1,10 +1,14 @@
+#%%
+import os 
+import matplotlib.pyplot as plt
 import pygame
 from pygame.locals import RESIZABLE, VIDEOEXPOSE
 
 from time import time
 
 import pyautogui
-w, h = pyautogui.size()
+#w, h = pyautogui.size()
+w, h = 2560, 1440
 
 
 
@@ -14,7 +18,7 @@ class Object:
             self, ID, name = None, color = (0,0,0), alpha = 255, text_color = None, pos = (0, 0), size = (1, 1), text = "", 
             fade_time = None, typeable = False, draggable = False, 
             constant = None, click = lambda : print("CLICKED"), 
-            double_click = lambda : print("DOUBLE CLICKED"), right_click = lambda : print("RIGHT CLICKED")):
+            double_click = lambda : print("DOUBLE CLICKED"), right_click = lambda : print("RIGHT CLICKED"), plot_data = None):
         
         self.ID = ID ; self.name = name if name != None else ID
         self.color = color ; self.alpha = alpha ; self.text_color = text_color if text_color != None else color
@@ -29,6 +33,8 @@ class Object:
         self.constant = constant; self.click = click ; self.double_click = double_click ; self.right_click = right_click
         self.clicked_on = False ; self.last_time_clicked = None ; self.right_clicked_on = False
         self.being_dragged = False ; self.being_typed = False
+        self.plot = None
+        if(plot_data != None): self.plot = self.create_plot(plot_data)
         
     def get_text(self):
         name_empty = self.name.replace(" ", "") == ""
@@ -47,6 +53,17 @@ class Object:
         font = pygame.font.SysFont(font, 100)
         self.text_box = font.render(text, True, self.text_color)
         self.text_box.set_alpha(self.alpha)
+        
+    def create_plot(self, plot_data):
+        plt.figure(figsize=[10, 10], dpi=100)
+        plt.axis('off')
+        plt.imshow(plot_data)
+        plt.savefig('plot.png', format = "png", bbox_inches = "tight") 
+        plt.close()
+        plot_img = pygame.image.load('plot.png')
+        plot_img.convert()
+        self.plot = plot_img
+        os.remove('plot.png')
         
     def copy(self):
         obj_copy = Object(
@@ -127,8 +144,11 @@ class Game:
         else:                   
             text_size = (size[0], size[0] / text_ratio) 
             text_pos = (pos[0], pos[1] + size[1]/2 - text_size[1]/2)
-            # If possible, add /n to make new lines
         return(text_pos, text_size)
+    
+    def get_plot_pos_size(self, obj):
+        size = self.obj_size(obj) ; pos = self.obj_pos(obj)
+        return(pos, size)
         
     def render(self, obj):
         size = self.obj_size(obj) ; pos = self.obj_pos(obj)
@@ -141,6 +161,10 @@ class Game:
             text_pos, text_size = self.get_text_pos_size(obj)
             text = pygame.transform.scale(obj.text_box, text_size)
             self.screen.blit(text, text_pos)
+        if(obj.plot != None):
+            plot_pos, plot_size = self.get_plot_pos_size(obj)
+            plot = pygame.transform.scale(obj.plot, plot_size)
+            self.screen.blit(plot, plot_pos)
         
     def run(self):
         running = True ; frames = 0
@@ -252,3 +276,4 @@ if __name__ == "__main__":
     typing = game.add_object("TYPE", color = (1, 1, 255), size = (1, .1), pos = (.3, .3), text_color = (0,0,0), typeable = True, draggable = True)
     new = game.add_object("NEW", color = (255, 1, 255), size = (.1, .1), pos = (.4, .4),  text_color = (0,0,0), double_click = new_button)
     game.run()
+# %%
